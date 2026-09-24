@@ -41,9 +41,22 @@ import {
 
 type Aba = 'aguardando' | 'protocolos' | 'adiantamentos'
 
+// Só pra colunas `date` puro (ex.: data_venda_referencia) — concatenar
+// T00:00:00 evita o fuso local jogar a data pro dia anterior.
 function fmtDate(v: string | null): string {
   if (!v) return '—'
   const d = new Date(`${v}T00:00:00`)
+  return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('pt-BR')
+}
+
+// SPEC-161 Prioridade 15 — bug confirmado: fmtDate() tratava created_at
+// (timestamptz, já com hora/offset completos) como se fosse um `date` puro,
+// concatenando "T00:00:00" numa string que já tinha timestamp completo —
+// isso gerava uma data inválida e a coluna "Criado em" sempre mostrava
+// "—". Pra timestamptz, usar new Date(v) direto, sem concatenar nada.
+function fmtDateTime(v: string | null): string {
+  if (!v) return '—'
+  const d = new Date(v)
   return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('pt-BR')
 }
 
@@ -220,7 +233,7 @@ export default function Garantia() {
                         )}
                       </TableCell>
                       <TableCell className="text-sm text-slate-500">
-                        {fmtDate(item.created_at)}
+                        {fmtDateTime(item.created_at)}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -263,6 +276,11 @@ export default function Garantia() {
                       </TableCell>
                       <TableCell className="text-sm">
                         {p.desfecho ? DESFECHO_LABEL[p.desfecho] : '—'}
+                        {p.desfecho_em && (
+                          <p className="text-[11px] text-slate-400 mt-0.5">
+                            em {fmtDate(p.desfecho_em)}
+                          </p>
+                        )}
                       </TableCell>
                       <TableCell className="text-right">
                         <Button

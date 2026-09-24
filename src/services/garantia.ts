@@ -22,6 +22,7 @@ export type MotivoGarantia =
   | 'sobrecarga_mau_uso'
   | 'envio_errado'
   | 'producao_errada'
+  | 'avaria'
   | 'outro'
 export type AtendimentoGarantia = 'imediato' | 'analise_fornecedor'
 export type PrazoReferencia = 'peca' | 'fornecedor'
@@ -39,6 +40,7 @@ export const MOTIVO_LABEL: Record<MotivoGarantia, string> = {
   sobrecarga_mau_uso: 'Sobrecarga / mau uso',
   envio_errado: 'Envio errado',
   producao_errada: 'Produção errada',
+  avaria: 'Avaria (dano na entrega)',
   outro: 'Outro',
 }
 
@@ -76,6 +78,7 @@ export const DESFECHO_LABEL: Record<string, string> = {
   peca_nova: 'Peça nova',
   conserto: 'Conserto',
   nao_acatado: 'Não acatado',
+  credito_gerado_despacho: 'Crédito gerado em despacho',
 }
 
 export interface Contato {
@@ -111,6 +114,7 @@ export interface ProdutoBusca {
   nome: string
   sku: string | null
   referencia: string | null
+  codigo_produto: number | null
 }
 
 // Usa a RPC garantia_buscar_produtos (SECURITY DEFINER) porque a RLS real
@@ -171,7 +175,29 @@ export interface ListarItensFiltro {
   semProtocolo?: boolean
   fornecedorId?: string
   adiantamentoPendente?: boolean
+  garantiaProtocoloId?: string
   search?: string
+}
+
+// SPEC-161 Prioridade 12 — bug confirmado: antes, produto_nome_resolvido
+// sempre copiava produto_descricao_livre, nunca resolvia o nome real de um
+// produto cadastrado (produto_id preenchido). Não dá pra corrigir com um
+// simples `.select('*, produtos(nome)')`: a RLS real de `produtos`
+// (spec069_produtos_select) exige um papel do Hub que o Controle de
+// Garantia não tem — um embed direto ficaria em branco pra qualquer
+// usuário sem esse papel (mesmo bug, disfarçado). Por isso resolve em lote
+// via garantia_resolver_nomes_produtos (SECURITY DEFINER).
+async function resolverNomesProdutos(produtoIds: string[]): Promise<Record<string, string>> {
+  if (produtoIds.length === 0) return {}
+  const { data, error } = await (supabase as any).rpc('garantia_resolver_nomes_produtos', {
+    p_produto_ids: produtoIds,
+  })
+  if (error) throw error
+  const mapa: Record<string, string> = {}
+  for (const row of (data ?? []) as { id: string; nome: string }[]) {
+    mapa[row.id] = row.nome
+  }
+  return mapa
 }
 
 export async function listarItens(filtro: ListarItensFiltro = {}): Promise<GarantiaItemRow[]> {
@@ -186,6 +212,7 @@ export async function listarItens(filtro: ListarItensFiltro = {}): Promise<Garan
   if (filtro.adiantamentoPendente) {
     query = query.eq('adiantamento', true).is('peca_antiga_devolvida_em', null)
   }
+  if (filtro.garantiaProtocoloId) query = query.eq('garantia_protocolo_id', filtro.garantiaProtocoloId)
   if (filtro.search && filtro.search.trim()) {
     const termo = filtro.search.trim()
     query = query.or(
@@ -196,13 +223,24 @@ export async function listarItens(filtro: ListarItensFiltro = {}): Promise<Garan
   const { data, error } = await query
   if (error) throw error
 
-  return ((data ?? []) as any[]).map((d) => ({
+  const linhas = (data ?? []) as any[]
+  const produtoIds = Array.from(
+    new Set(linhas.map((d) => d.produto_id).filter((id): id is string => !!id)),
+  )
+  const nomesProdutos = await resolverNomesProdutos(produtoIds).catch(() => ({}) as Record<
+    string,
+    string
+  >)
+
+  return linhas.map((d) => ({
     id: d.id,
     fornecedor_id: d.fornecedor_id,
     fornecedor_nome: d.contatos_fornecedor?.nome ?? null,
     produto_id: d.produto_id,
     produto_descricao_livre: d.produto_descricao_livre,
-    produto_nome_resolvido: d.produto_descricao_livre,
+    produto_nome_resolvido: d.produto_id
+      ? (nomesProdutos[d.produto_id] ?? d.produto_descricao_livre ?? null)
+      : d.produto_descricao_livre,
     cliente_id: d.cliente_id,
     cliente_nome: d.contatos_cliente?.nome ?? d.cliente_nome ?? null,
     orcamento_id: d.orcamento_id,
@@ -221,6 +259,12 @@ export async function listarItens(filtro: ListarItensFiltro = {}): Promise<Garan
     created_at: d.created_at,
     updated_at: d.updated_at,
   }))
+}
+
+// SPEC-161 Prioridade 11 — mostrar os itens dentro de um protocolo.
+// Reaproveita listarItens com o filtro novo (garantiaProtocoloId).
+export async function listarItensDoProtocolo(protocoloId: string): Promise<GarantiaItemRow[]> {
+  return listarItens({ garantiaProtocoloId: protocoloId })
 }
 
 export interface CriarGarantiaItemInput {
@@ -286,6 +330,7 @@ export interface GarantiaProtocoloRow {
   responsavel_nome: string
   status: ProtocoloStatus
   desfecho: string | null
+  desfecho_em: string | null
   observacao: string | null
   created_at: string
   updated_at: string
@@ -311,6 +356,7 @@ export async function listarProtocolos(fornecedorId?: string): Promise<GarantiaP
     responsavel_nome: d.responsavel_nome,
     status: d.status,
     desfecho: d.desfecho,
+    desfecho_em: d.desfecho_em,
     observacao: d.observacao,
     created_at: d.created_at,
     updated_at: d.updated_at,
@@ -382,13 +428,17 @@ export async function atualizarStatusProtocolo(
   if (error) throw error
 }
 
+// SPEC-161 Prioridade 10: desfecho ganhou 'credito_gerado_despacho' + data
+// própria (desfecho_em) — "a data do que aconteceu, de quando aconteceu",
+// pra medir a duração do protocolo junto com created_at.
 export async function finalizarProtocolo(
   id: string,
-  desfecho: 'peca_nova' | 'conserto' | 'nao_acatado',
+  desfecho: 'peca_nova' | 'conserto' | 'nao_acatado' | 'credito_gerado_despacho',
+  desfechoEm: string,
 ): Promise<void> {
   const { error } = await (supabase as any)
     .from('garantia_protocolos')
-    .update({ status: 'finalizado', desfecho })
+    .update({ status: 'finalizado', desfecho, desfecho_em: desfechoEm })
     .eq('id', id)
   if (error) throw error
 }

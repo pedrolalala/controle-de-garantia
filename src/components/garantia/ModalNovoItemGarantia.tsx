@@ -53,8 +53,13 @@ const MOTIVOS: MotivoGarantia[] = [
   'sobrecarga_mau_uso',
   'envio_errado',
   'producao_errada',
+  'avaria',
   'outro',
 ]
+
+function today(): string {
+  return new Date().toISOString().slice(0, 10)
+}
 
 export function ModalNovoItemGarantia({ open, onOpenChange, onSuccess }: Props) {
   const { toast } = useToast()
@@ -73,7 +78,10 @@ export function ModalNovoItemGarantia({ open, onOpenChange, onSuccess }: Props) 
   const [produtoDescricaoLivre, setProdutoDescricaoLivre] = useState('')
 
   const [buscandoDataVenda, setBuscandoDataVenda] = useState(false)
-  const [dataVenda, setDataVenda] = useState('')
+  // SPEC-161 Prioridade 16: "a data, que acho que teria que vir a data de
+  // hoje" — ponto de partida, não trava a busca automática nem a edição
+  // manual por cima.
+  const [dataVenda, setDataVenda] = useState(today())
   const [dataVendaOrigem, setDataVendaOrigem] = useState<DataVendaOrigem | null>(null)
 
   const [prazoAnos, setPrazoAnos] = useState('')
@@ -103,7 +111,7 @@ export function ModalNovoItemGarantia({ open, onOpenChange, onSuccess }: Props) 
       setProdutosResultado([])
       setProdutoSelecionado(null)
       setProdutoDescricaoLivre('')
-      setDataVenda('')
+      setDataVenda(today())
       setDataVendaOrigem(null)
       setPrazoAnos('')
       setPrazoReferencia('fornecedor')
@@ -297,6 +305,11 @@ export function ModalNovoItemGarantia({ open, onOpenChange, onSuccess }: Props) 
             {produtoSelecionado ? (
               <div className="flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
                 <span className="text-sm flex-1">
+                  {produtoSelecionado.codigo_produto ? (
+                    <span className="font-mono text-xs text-slate-500 mr-1.5">
+                      #{produtoSelecionado.codigo_produto}
+                    </span>
+                  ) : null}
                   {produtoSelecionado.nome}
                   {produtoSelecionado.sku ? ` — ${produtoSelecionado.sku}` : ''}
                 </span>
@@ -336,6 +349,11 @@ export function ModalNovoItemGarantia({ open, onOpenChange, onSuccess }: Props) 
                           setProdutosResultado([])
                         }}
                       >
+                        {p.codigo_produto ? (
+                          <span className="font-mono text-xs text-slate-500 mr-1.5">
+                            #{p.codigo_produto}
+                          </span>
+                        ) : null}
                         {p.nome}
                         {p.sku ? ` — ${p.sku}` : ''}
                       </button>
