@@ -17,13 +17,16 @@ import {
   Inbox,
   Clock,
   Folders,
+  ScrollText,
 } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
+import { useIsAdmin } from '@/hooks/use-is-admin'
 import { ModalNovoItemGarantia } from '@/components/garantia/ModalNovoItemGarantia'
 import { ModalAbrirProtocolo } from '@/components/garantia/ModalAbrirProtocolo'
 import { ModalAtualizarProtocolo } from '@/components/garantia/ModalAtualizarProtocolo'
 import { PainelAdiantamentosPendentes } from '@/components/garantia/PainelAdiantamentosPendentes'
+import { LogPanelGarantia } from '@/components/garantia/LogPanelGarantia'
 import {
   listarItens,
   listarProtocolos,
@@ -39,7 +42,8 @@ import {
 // protocolo ("o canto cheio de coisas pra pedir garantia"), protocolos
 // abertos com o fornecedor, e adiantamentos pendentes de devolução.
 
-type Aba = 'aguardando' | 'protocolos' | 'adiantamentos'
+// SPEC-174 N10: aba "log" só é oferecida/renderizada para administrador.
+type Aba = 'aguardando' | 'protocolos' | 'adiantamentos' | 'log'
 
 // Só pra colunas `date` puro (ex.: data_venda_referencia) — concatenar
 // T00:00:00 evita o fuso local jogar a data pro dia anterior.
@@ -68,6 +72,7 @@ function statusBadgeClass(status: string): string {
 
 export default function Garantia() {
   const { toast } = useToast()
+  const { isAdmin } = useIsAdmin()
   const [aba, setAba] = useState<Aba>('aguardando')
 
   const [itensAguardando, setItensAguardando] = useState<GarantiaItemRow[]>([])
@@ -181,10 +186,26 @@ export default function Garantia() {
           <Clock className="w-3.5 h-3.5" />
           Adiantamentos pendentes
         </button>
+        {/* SPEC-174 N10: aba "Log" só aparece para administrador. */}
+        {isAdmin && (
+          <button
+            type="button"
+            onClick={() => setAba('log')}
+            className={cn(
+              'px-3 py-1.5 rounded-full text-xs font-medium border transition-colors inline-flex items-center gap-1.5',
+              aba === 'log'
+                ? 'bg-primary text-primary-foreground border-primary'
+                : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50',
+            )}
+          >
+            <ScrollText className="w-3.5 h-3.5" />
+            Log
+          </button>
+        )}
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm flex-1 overflow-hidden flex flex-col min-h-0 p-4">
-        {loading && aba !== 'adiantamentos' ? (
+        {loading && aba !== 'adiantamentos' && aba !== 'log' ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
           </div>
@@ -298,6 +319,8 @@ export default function Garantia() {
               </Table>
             </div>
           )
+        ) : aba === 'log' ? (
+          <LogPanelGarantia />
         ) : (
           <PainelAdiantamentosPendentes />
         )}
