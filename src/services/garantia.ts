@@ -212,7 +212,8 @@ export async function listarItens(filtro: ListarItensFiltro = {}): Promise<Garan
   if (filtro.adiantamentoPendente) {
     query = query.eq('adiantamento', true).is('peca_antiga_devolvida_em', null)
   }
-  if (filtro.garantiaProtocoloId) query = query.eq('garantia_protocolo_id', filtro.garantiaProtocoloId)
+  if (filtro.garantiaProtocoloId)
+    query = query.eq('garantia_protocolo_id', filtro.garantiaProtocoloId)
   if (filtro.search && filtro.search.trim()) {
     const termo = filtro.search.trim()
     query = query.or(
@@ -227,10 +228,9 @@ export async function listarItens(filtro: ListarItensFiltro = {}): Promise<Garan
   const produtoIds = Array.from(
     new Set(linhas.map((d) => d.produto_id).filter((id): id is string => !!id)),
   )
-  const nomesProdutos = await resolverNomesProdutos(produtoIds).catch(() => ({}) as Record<
-    string,
-    string
-  >)
+  const nomesProdutos = await resolverNomesProdutos(produtoIds).catch(
+    () => ({}) as Record<string, string>,
+  )
 
   return linhas.map((d) => ({
     id: d.id,
@@ -320,6 +320,88 @@ export async function marcarPecaAntigaDevolvida(id: string, data: string): Promi
     .update({ peca_antiga_devolvida_em: data })
     .eq('id', id)
   if (error) throw error
+}
+
+// ---------------------------------------------------------------------
+// SPEC-174 N10 — aba "Log" (só administrador): histórico de quem fez o
+// quê. Junta a trilha de auditoria genérica nova (garantia_protocolos_log
+// e garantia_itens_log, migration 20261001_174b_log_producao_garantia —
+// cobre criação e qualquer UPDATE: mudança de status, desfecho, devolução
+// de peça de adiantamento). Garantia não tinha nenhuma tabela de
+// histórico antes desta migration (diferente da Produção). A RLS das 2
+// tabelas *_log só deixa administrador ler; para qualquer outro papel
+// essas queries voltam vazias.
+// ---------------------------------------------------------------------
+
+export const LOG_ACAO_LABEL: Record<string, string> = {
+  criado: 'Criado',
+  atualizado: 'Atualizado',
+  status_alterado: 'Status alterado',
+}
+
+export interface LogGarantiaEntry {
+  id: string
+  data_hora: string
+  usuario_nome: string | null
+  acao: string
+  origem: 'Protocolo' | 'Item'
+  referencia: string | null
+  detalhe: string | null
+}
+
+export async function listarLogGarantia(limite = 300): Promise<LogGarantiaEntry[]> {
+  const [protocolosLog, itensLog] = await Promise.all([
+    (supabase as any)
+      .from('garantia_protocolos_log')
+      .select(
+        '*, usuarios:usuario_id(nome), garantia_protocolos:garantia_protocolo_id(responsavel_nome, contatos:fornecedor_id(nome))',
+      )
+      .order('criado_em', { ascending: false })
+      .limit(limite),
+    (supabase as any)
+      .from('garantia_itens_log')
+      .select(
+        '*, usuarios:usuario_id(nome), garantia_itens:garantia_item_id(produto_descricao_livre, cliente_nome)',
+      )
+      .order('criado_em', { ascending: false })
+      .limit(limite),
+  ])
+
+  if (protocolosLog.error) throw protocolosLog.error
+  if (itensLog.error) throw itensLog.error
+
+  const entradas: LogGarantiaEntry[] = []
+
+  for (const d of (protocolosLog.data ?? []) as any[]) {
+    entradas.push({
+      id: `protocolo-${d.id}`,
+      data_hora: d.criado_em,
+      usuario_nome: d.usuarios?.nome ?? null,
+      acao: LOG_ACAO_LABEL[d.acao] ?? d.acao,
+      origem: 'Protocolo',
+      referencia:
+        d.garantia_protocolos?.contatos?.nome ?? d.garantia_protocolos?.responsavel_nome ?? null,
+      detalhe:
+        d.acao === 'status_alterado'
+          ? `${PROTOCOLO_STATUS_LABEL[d.dados_antigos?.status as ProtocoloStatus] ?? d.dados_antigos?.status ?? '—'} → ${PROTOCOLO_STATUS_LABEL[d.dados_novos?.status as ProtocoloStatus] ?? d.dados_novos?.status ?? '—'}`
+          : null,
+    })
+  }
+
+  for (const d of (itensLog.data ?? []) as any[]) {
+    entradas.push({
+      id: `item-${d.id}`,
+      data_hora: d.criado_em,
+      usuario_nome: d.usuarios?.nome ?? null,
+      acao: LOG_ACAO_LABEL[d.acao] ?? d.acao,
+      origem: 'Item',
+      referencia:
+        d.garantia_itens?.produto_descricao_livre ?? d.garantia_itens?.cliente_nome ?? null,
+      detalhe: null,
+    })
+  }
+
+  return entradas.sort((a, b) => new Date(b.data_hora).getTime() - new Date(a.data_hora).getTime())
 }
 
 export interface GarantiaProtocoloRow {
@@ -417,10 +499,7 @@ export async function abrirProtocolo(
   return protocoloId
 }
 
-export async function atualizarStatusProtocolo(
-  id: string,
-  status: ProtocoloStatus,
-): Promise<void> {
+export async function atualizarStatusProtocolo(id: string, status: ProtocoloStatus): Promise<void> {
   const { error } = await (supabase as any)
     .from('garantia_protocolos')
     .update({ status })
@@ -441,85 +520,4 @@ export async function finalizarProtocolo(
     .update({ status: 'finalizado', desfecho, desfecho_em: desfechoEm })
     .eq('id', id)
   if (error) throw error
-}
-
-// ---------------------------------------------------------------------
-// SPEC-174 N10 — aba "Log" (só administrador): histórico de quem fez o
-// quê. Junta a trilha de auditoria genérica nova (garantia_protocolos_log
-// e garantia_itens_log, migration 20261001_174b_log_producao_garantia —
-// cobre criação e qualquer UPDATE: mudança de status, desfecho, devolução
-// de peça de adiantamento). Garantia não tinha nenhuma tabela de
-// histórico antes desta migration (diferente da Produção). A RLS das 2
-// tabelas *_log só deixa administrador ler; para qualquer outro papel
-// essas queries voltam vazias.
-// ---------------------------------------------------------------------
-
-export const LOG_ACAO_LABEL: Record<string, string> = {
-  criado: 'Criado',
-  atualizado: 'Atualizado',
-  status_alterado: 'Status alterado',
-}
-
-export interface LogGarantiaEntry {
-  id: string
-  data_hora: string
-  usuario_nome: string | null
-  acao: string
-  origem: 'Protocolo' | 'Item'
-  referencia: string | null
-  detalhe: string | null
-}
-
-export async function listarLogGarantia(limite = 300): Promise<LogGarantiaEntry[]> {
-  const [protocolosLog, itensLog] = await Promise.all([
-    (supabase as any)
-      .from('garantia_protocolos_log')
-      .select(
-        '*, usuarios:usuario_id(nome), garantia_protocolos:garantia_protocolo_id(responsavel_nome, contatos:fornecedor_id(nome))',
-      )
-      .order('criado_em', { ascending: false })
-      .limit(limite),
-    (supabase as any)
-      .from('garantia_itens_log')
-      .select(
-        '*, usuarios:usuario_id(nome), garantia_itens:garantia_item_id(produto_descricao_livre, cliente_nome)',
-      )
-      .order('criado_em', { ascending: false })
-      .limit(limite),
-  ])
-
-  if (protocolosLog.error) throw protocolosLog.error
-  if (itensLog.error) throw itensLog.error
-
-  const entradas: LogGarantiaEntry[] = []
-
-  for (const d of (protocolosLog.data ?? []) as any[]) {
-    entradas.push({
-      id: `protocolo-${d.id}`,
-      data_hora: d.criado_em,
-      usuario_nome: d.usuarios?.nome ?? null,
-      acao: LOG_ACAO_LABEL[d.acao] ?? d.acao,
-      origem: 'Protocolo',
-      referencia: d.garantia_protocolos?.contatos?.nome ?? d.garantia_protocolos?.responsavel_nome ?? null,
-      detalhe:
-        d.acao === 'status_alterado'
-          ? `${PROTOCOLO_STATUS_LABEL[d.dados_antigos?.status as ProtocoloStatus] ?? d.dados_antigos?.status ?? '—'} → ${PROTOCOLO_STATUS_LABEL[d.dados_novos?.status as ProtocoloStatus] ?? d.dados_novos?.status ?? '—'}`
-          : null,
-    })
-  }
-
-  for (const d of (itensLog.data ?? []) as any[]) {
-    entradas.push({
-      id: `item-${d.id}`,
-      data_hora: d.criado_em,
-      usuario_nome: d.usuarios?.nome ?? null,
-      acao: LOG_ACAO_LABEL[d.acao] ?? d.acao,
-      origem: 'Item',
-      referencia:
-        d.garantia_itens?.produto_descricao_livre ?? d.garantia_itens?.cliente_nome ?? null,
-      detalhe: null,
-    })
-  }
-
-  return entradas.sort((a, b) => new Date(b.data_hora).getTime() - new Date(a.data_hora).getTime())
 }

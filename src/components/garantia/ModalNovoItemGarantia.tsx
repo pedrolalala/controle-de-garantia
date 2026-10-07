@@ -381,9 +381,7 @@ export function ModalNovoItemGarantia({ open, onOpenChange, onSuccess }: Props) 
                 disabled={!clienteSelecionado || !produtoSelecionado || buscandoDataVenda}
                 onClick={handleBuscarDataVenda}
               >
-                {buscandoDataVenda ? (
-                  <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
-                ) : null}
+                {buscandoDataVenda ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}
                 Buscar automaticamente
               </Button>
             </div>
@@ -394,8 +392,8 @@ export function ModalNovoItemGarantia({ open, onOpenChange, onSuccess }: Props) 
               </p>
             )}
             <p className="text-[11px] text-slate-400">
-              A busca automática exige cliente e peça selecionados (não vale nome/descrição
-              livre). Se não encontrar nada, preencha a data manualmente.
+              A busca automática exige cliente e peça selecionados (não vale nome/descrição livre).
+              Se não encontrar nada, preencha a data manualmente.
             </p>
           </div>
 
