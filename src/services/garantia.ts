@@ -112,7 +112,6 @@ export async function buscarClientes(search: string): Promise<Contato[]> {
 export interface ProdutoBusca {
   id: string
   nome: string
-  sku: string | null
   referencia: string | null
   codigo_produto: number | null
 }

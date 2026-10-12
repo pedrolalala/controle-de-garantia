@@ -311,7 +311,7 @@ export function ModalNovoItemGarantia({ open, onOpenChange, onSuccess }: Props) 
                     </span>
                   ) : null}
                   {produtoSelecionado.nome}
-                  {produtoSelecionado.sku ? ` — ${produtoSelecionado.sku}` : ''}
+                  {produtoSelecionado.referencia ? ` — ${produtoSelecionado.referencia}` : ''}
                 </span>
                 <Button
                   type="button"
@@ -355,7 +355,7 @@ export function ModalNovoItemGarantia({ open, onOpenChange, onSuccess }: Props) 
                           </span>
                         ) : null}
                         {p.nome}
-                        {p.sku ? ` — ${p.sku}` : ''}
+                        {p.referencia ? ` — ${p.referencia}` : ''}
                       </button>
                     ))}
                   </div>
